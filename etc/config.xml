@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="urn:magento:module:Magento_Store:etc/config.xsd">
+  <default>
+    <payment>
+      <enterpay>
+        <title>Enterpay</title>
+        <model>Solteq\Enterpay\Model\Enterpay</model>
+        <order_status>pending</order_status>
+        <approved_order_status>processing</approved_order_status>
+        <payment_action>authorize_capture</payment_action>
+        <active>0</active>
+        <test>0</test>
+        <merchant_id></merchant_id>
+        <merchant_secret></merchant_secret>
+        <merchant_secret_version>1</merchant_secret_version>
+        <allowspecific>0</allowspecific>
+        <group>enterpay_payment_method</group>
+      </enterpay>
+    </payment>
+  </default>
+</config>
