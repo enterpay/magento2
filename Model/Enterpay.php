@@ -399,6 +399,16 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
         'delivery_address[postalCode]' => $shippingAddress->getPostcode(),
         'delivery_address[city]' => $shippingAddress->getCity(),
         'delivery_address[countryCode]' => $shippingAddress->getCountryId(),
+        'buyer_info[firstName]' => $billingAddress->getFirstname(),
+        'buyer_info[lastName]' => $billingAddress->getLastname(),
+        'buyer_info[phoneNumber]' => $billingAddress->getTelephone(),
+        'buyer_info[email]' => $billingAddress->getEmail(),
+        'buyer_info[companyName]' => $billingAddress->getCompany(),
+        'buyer_info[businessId]' => $billingAddress->getBusinessId(),
+        'buyer_info[dateOfBirth]' => $order->getDob(),
+        'buyer_info[companyVat]' => $order->getCompanyVat(),
+        
+        
       ];
 
       // Add cart items
