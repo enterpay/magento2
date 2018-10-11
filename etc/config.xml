@@ -10,6 +10,7 @@
         <payment_action>authorize_capture</payment_action>
         <active>0</active>
         <test>0</test>
+        <debug>1</debug>
         <merchant_id></merchant_id>
         <merchant_secret></merchant_secret>
         <merchant_secret_version>1</merchant_secret_version>

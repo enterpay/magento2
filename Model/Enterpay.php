@@ -380,6 +380,7 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
 
       // Add basic info
       $data = [
+        'debug' => $this->_getDebugMode(),
         'version' => '1',
         'merchant' => $this->_getMerchantId(),
         'key_version' => $this->_getMerchantSecretVersion(),
@@ -404,8 +405,8 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
         'buyer_info[phoneNumber]' => $billingAddress->getTelephone(),
         'buyer_info[email]' => $billingAddress->getEmail(),
         'buyer_info[companyName]' => $billingAddress->getCompany(),
-        'buyer_info[businessId]' => $billingAddress->getBusinessId(),
-        'buyer_info[dateOfBirth]' => $order->getDob(),
+        'buyer_info[businessId]' => $billingAddress->getBusinessId(), 
+        'buyer_info[dateOfBirth]' => $order->getDob(), 
         'buyer_info[companyVat]' => $order->getCompanyVat(),
         
         
@@ -436,6 +437,8 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
       ksort($params);
 
       foreach ($params as $key => $value) {
+        // Remove debug mode from calculation HMAC
+        unset($params['debug']);
         // Remove keys with empty or missing value
         if ($value === null || $value === '') {
           unset($params[$key]);
@@ -524,6 +527,16 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
     private function _getTestMode()
     {
       return (bool) $this->getConfigData('test');
+    }
+
+    /**
+     * Get debug mode
+     *
+     * @return boolean
+     */
+    private function _getDebugMode()
+    {
+      return (bool) $this->getConfigData('debug');
     }
 
     /**

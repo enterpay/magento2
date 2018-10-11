@@ -29,7 +29,8 @@ Adjustments and settings
 | Merchant ID              | Merchant ID is unique identifier for merchant, which should be obtained from Enterpay. Note: merchant ID for test and production servers are different         |        No        |
 | Merchant Secret          | Merchant key is a secret API key which should be obtained from Enterpay.  Note: merchant ID for test and production servers are different                      |        No        |
 | Merchant Secret Version  | Merchant secret version is a version of API key. The value is 1 by default. If merchant wants to obtain a new key, the merchant secret version increments by 1 |        No        |
-| Test Mode                | Must be set No in production and Yes for testing                                                                                                               |        No        |
+| Test Mode                | Must be set No in production and Yes for testing (Flag chooses between production URL checkout and test URL checkout)                                          |        No        |
+| Debug Mode               | Must be set No in production and Yes for testing  (If yes integration error message will be shown for a developer)                                             |        No        |
 | Invoice Reference Prefix | Invoice reference prefix which is created from prefix, Magento's order ID and  check ID                                                                        |        Yes       |
 | Pending Order Status     | This is a purchase status, when purchase is marked as "pending" status. It means, a purchase will be manually approved by Enterpay                             |        No        |
 | Approved Order Status    | This is a purchase status, when purchase is accepted immediately                                                                                               |        No        |
