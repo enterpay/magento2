@@ -2,6 +2,7 @@
 
 namespace Solteq\Enterpay\Model;
 
+use Magento\Bundle\Model\Product\Type as BundleType;
 use Magento\Framework\Exception\LocalizedException;
 
 /**
@@ -10,6 +11,7 @@ use Magento\Framework\Exception\LocalizedException;
 class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
 {
     const PAYMENT_METHOD_CODE = 'enterpay';
+    const SHIPPING_IDENTIFIER = 'SHIP';
 
     /**
      * Payment method code
@@ -179,17 +181,16 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
         throw new LocalizedException(__('Invalid amount for refund.'));
       }
 
+      // Check if order has bundle products
+      // Only the parent product is sent in the payment and child products may be refunded with credit memo. Therefore
+      // we need to force manual refunding of orders with bundle products
+      if ($this->getIsBundleOrder($payment->getOrder())) {
+        throw new LocalizedException(__('Cannot refund order with bundle products. Please refund offline.'));
+      }
+
       // Check transaction ID
       if (!$payment->getTransactionId()) {
         throw new LocalizedException(__('Invalid transaction ID.'));
-      }
-
-      // Check tax rates
-      // We don't have access to refunded items and arbitrary amount may be refunded
-      // using "Adjustment fee" so we don't know which VAT/TAX rates to refund. Therefore
-      // we need to force manual refunding of orders with more than one tax rate.
-      if (count($this->_getTaxRates($payment->getOrder())) !== 1) {
-        throw new LocalizedException(__('Cannot refund order with multiple tax rates. Please refund offline.'));
       }
 
       $body = $this->_buildRefundRequest($payment, $amount);
@@ -219,16 +220,223 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
         ]
       ];
 
-      $taxRates = $this->_getTaxRates($payment->getOrder());
-      $data['refund']['vat_bases_to_refund'][] = [
-        'vat_base' => reset($taxRates),
-        'currency' => $payment->getOrder()->getOrderCurrencyCode(),
-        'refunded_amount' => intval(floatval($amount) * 100),
-      ];
+      // Items Refund (+ shipping)
+      $data['refund']['items_to_refund'] = $this->getItemsToRefund($payment);
+
+      // Adjustment Refund
+      $adjustment = $payment->getCreditMemo()->getAdjustment();
+      if ($adjustment > 0) {
+        $data['refund']['vat_bases_to_refund'] = $this->getAdjustmentRefundData($payment);
+      }
 
       $data['hmac'] = $this->_calcInvoiceApiHmac($data);
 
       return $data;
+    }
+
+    /**
+     * Get the Item Refund data for the refund transaction including shipping as an item
+     *
+     * @param \Magento\Payment\Model\InfoInterface $payment
+     * @return array
+     */
+    protected function getItemsToRefund($payment)
+    {
+      $order = $payment->getOrder();
+      $creditMemo = $payment->getCreditMemo();
+
+      $items = [];
+      $num = 0;
+
+      // Refund Items
+      foreach ($creditMemo->getItems() as $index => $item) {
+        if ($item->getOrderItem()->getParentItem()) {
+          continue;
+        }
+        $items[] = [
+          "num" => $num,
+          "refunding_type" => "quantity",
+          'refunded_quantity' => $item->getQty()
+        ];
+        $num++;
+      }
+
+      // Refund Shipping
+      if (!$order->getIsVirtual()) {
+        $shipping = $creditMemo->getData('shipping_incl_tax');
+        $items[] = [
+          "num" => $num,
+          "refunding_type" => "amount",
+          'currency' => $payment->getOrder()->getOrderCurrencyCode(),
+          'refunded_amount' => intval(floatval($shipping) * 100)
+        ];
+      }
+      return $items;
+    }
+
+    /**
+     * Get the Adjustment Refund data for the refund transaction
+     *
+     * @param \Magento\Payment\Model\InfoInterface $payment
+     * @return array
+     */
+    protected function getAdjustmentRefundData($payment)
+    {
+      $adjustment = $payment->getCreditMemo()->getAdjustment();
+      $adjustment = intval(floatval($adjustment) * 100);
+      $allowedVatBaseRefundAmounts = $this->getAllowedVatBaseRefundAmounts($payment);
+      $totalAllowedRefunds = array_sum(array_column($allowedVatBaseRefundAmounts, 'amount'));
+      $roundingDelta = 0.0000001;
+
+      $data = [];
+      foreach ($allowedVatBaseRefundAmounts as $index => $vatBaseData) {
+        if ($vatBaseData['amount'] <= 0) {
+          continue;
+        }
+        $ratio = $vatBaseData['amount'] / $totalAllowedRefunds;
+        $value = $adjustment * $ratio;
+        $roundedValue = intval(round($value + $roundingDelta));
+
+        $data[] = [
+          'vat_base' => $vatBaseData['tax_rate'],
+          'currency' => $payment->getOrder()->getOrderCurrencyCode(),
+          'refunded_amount' => $roundedValue
+        ];
+      }
+      return $data;
+    }
+
+    /**
+     * Get the max vat base amounts that can be refunded. Returns array of tax classes with the amount as
+     * an integer denoting an amount of money in the fractional unit of the currency (cents, pennies etc.)
+     *
+     * example return =
+     *  [
+     *      14 => [
+     *          'tax_rate' => 0.14,
+     *          'amount' => 3600
+     *      ],
+     *      24 => [
+     *          'tax_rate' => 0.24,
+     *          'amount' => 50000
+     *      ]
+     *  ]
+     *
+     * @param \Magento\Payment\Model\InfoInterface $payment
+     * @return array
+     */
+    protected function getAllowedVatBaseRefundAmounts($payment)
+    {
+      $orderVatBaseAmounts = $this->getOrderVatBaseAmounts($payment->getOrder());
+      $creditMemoVatBaseRefunds = $this->getCreditMemoVatBaseRefunds($payment);
+      $allowedVatBaseRefundAmounts = [];
+      foreach ($orderVatBaseAmounts as $index => $vatBaseData) {
+        $refund = (isset($creditMemoVatBaseRefunds[$index])) ? $creditMemoVatBaseRefunds[$index]['amount'] : 0;
+        $allowedVatBaseRefundAmounts[$index] = [
+          'tax_rate' => $vatBaseData['tax_rate'],
+          'amount' => $vatBaseData['amount'] - $refund
+        ];
+      }
+      return $allowedVatBaseRefundAmounts;
+    }
+
+    /**
+     * Get the vat base amounts of the order items. Returns array of tax classes with the amount as
+     * an integer denoting an amount of money in the fractional unit of the currency (cents, pennies etc.)
+     *
+     * example return =
+     *  [
+     *      14 => [
+     *          'tax_rate' => 0.14,
+     *          'amount' => 3600
+     *      ],
+     *      24 => [
+     *          'tax_rate' => 0.24,
+     *          'amount' => 50000
+     *      ]
+     *  ]
+     *
+     * @param \Magento\Sales\Model\Order
+     * @return array
+     */
+    protected function getOrderVatBaseAmounts($order)
+    {
+      $orderVatBaseAmounts = [];
+      $orderItems = $this->_itemArgs($order);
+      foreach ($orderItems as $index => $item) {
+        $intTaxRate = intval(floatval($item['tax_rate']) * 100);
+        if (!isset($orderVatBaseAmounts[$intTaxRate])) {
+          $orderVatBaseAmounts[$intTaxRate] = [
+            'tax_rate' => $item['tax_rate'],
+            'amount' => (intval($item['unit_price_including_tax'] * $item['quantity']))
+          ];
+        } else {
+          $amount = (intval($item['unit_price_including_tax'] * $item['quantity']));
+          $orderVatBaseAmounts[$intTaxRate]['amount'] += $amount;
+        }
+      }
+      return $orderVatBaseAmounts;
+    }
+
+    /**
+     * Get the vat base amounts to be refunded. Returns array of tax classes with the amount as
+     * an integer denoting an amount of money in the fractional unit of the currency (cents, pennies etc.)
+     *
+     * example return =
+     *  [
+     *      14 => [
+     *          'tax_rate' => 0.14,
+     *          'amount' => 3600
+     *      ],
+     *      24 => [
+     *          'tax_rate' => 0.24,
+     *          'amount' => 50000
+     *      ]
+     *  ]
+     *
+     * @param $payment
+     * @return array
+     */
+    protected function getCreditMemoVatBaseRefunds($payment)
+    {
+      $vatBaseRefunds = [];
+      $creditMemo = $payment->getCreditMemo();
+
+      // Get Item VAT base refunds
+      foreach ($creditMemo->getItems() as $item) {
+        if ($item->getOrderItem()->getParentItem()) {
+          continue;
+        }
+        $orderItem = $item->getOrderItem();
+
+        $taxRate = round(floatval($orderItem->getTaxPercent() / 100), 2);
+        $intTaxRate = intval(floatval($taxRate) * 100);
+        $rowTotal = intval(floatval($item->getData('row_total_incl_tax')) * 100);
+        if (!isset($vatBaseRefunds[$intTaxRate])) {
+          $vatBaseRefunds[$intTaxRate] = ['tax_rate' => $taxRate, 'amount' => $rowTotal];
+        } else {
+          $vatBaseRefunds[$intTaxRate]['amount'] += $rowTotal;
+        }
+      }
+
+      // Get Shipping VAT Base refunds
+      if ($payment->getOrder()->getIsVirtual()) {
+        $shippingExclTax = $payment->getOrder()->getShippingAmount();
+        $shippingInclTax = $payment->getOrder()->getShippingInclTax();
+        $shippingTaxRate = 0;
+        if ($shippingExclTax > 0) {
+          $shippingTaxRate = round(($shippingInclTax - $shippingExclTax) / $shippingExclTax, 2);
+        }
+        $intTaxRate = intval(floatval($shippingTaxRate) * 100);
+        $shippingAmount = $creditMemo->getData('shipping_incl_tax');
+        $shippingAmount = intval(floatval($shippingAmount) * 100);
+        if (!isset($vatBaseRefunds[$intTaxRate])) {
+          $vatBaseRefunds[$intTaxRate] = ['tax_rate' => $shippingTaxRate, 'amount' => $shippingAmount];
+        } else {
+          $vatBaseRefunds[$intTaxRate]['amount'] += $shippingAmount;
+        }
+      }
+      return $vatBaseRefunds;
     }
 
     /**
@@ -272,6 +480,23 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
       }
 
       return FALSE;
+    }
+
+    /**
+     * Return true if order has bundle products.
+     *
+     * @param \Magento\Sales\Model\Order
+     * @return bool
+     */
+    protected function getIsBundleOrder($order)
+    {
+      $orderItems = $order->getItems();
+      foreach ($orderItems as $orderItem) {
+        if ($orderItem->getData('product_type') === BundleType::TYPE_CODE) {
+          return true;
+        }
+      }
+      return false;
     }
 
     /**
@@ -610,7 +835,7 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
         }
 
         $items[] = array(
-          'identifier' => 'SHIP',
+          'identifier' => self::SHIPPING_IDENTIFIER,
           'name' => $order->getShippingDescription(),
           'quantity' => 1,
           'unit_price_including_tax' => intval(floatval($order->getShippingInclTax()) * 100),
