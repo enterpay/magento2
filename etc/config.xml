@@ -16,6 +16,8 @@
         <merchant_secret_version>1</merchant_secret_version>
         <allowspecific>0</allowspecific>
         <group>enterpay_payment_method</group>
+        <generate_invoice>0</generate_invoice>
+        <activate_invoice>1</activate_invoice>
       </enterpay>
     </payment>
   </default>

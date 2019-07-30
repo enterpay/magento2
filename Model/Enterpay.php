@@ -86,24 +86,34 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
     protected $_taxHelper;
 
     /**
-     * Constructor
+     * @var bool
+     */
+    protected $_fullRefund;
+
+  /**
+   * @var \Solteq\Enterpay\Model\EnterpayCurlPutFactory
+   */
+    protected $_enterpayCurlPutFactory;
+
+    /**
+     * Enterpay constructor.
      * @param \Magento\Framework\Model\Context $context
      * @param \Magento\Framework\Registry $registry
      * @param \Magento\Framework\Api\ExtensionAttributesFactory $extensionFactory
      * @param \Magento\Framework\Api\AttributeValueFactory $customAttributeFactory
      * @param \Magento\Payment\Helper\Data $paymentData
      * @param \Magento\Framework\App\Config\ScopeConfigInterface $scopeConfig
-     * @param Logger $logger
+     * @param \Magento\Payment\Model\Method\Logger $logger
      * @param \Magento\Sales\Model\ResourceModel\Order\Status\CollectionFactory $orderStatusCollectionFactory
      * @param \Magento\Checkout\Model\Session $session
      * @param \Magento\Framework\HTTP\ZendClientFactory $httpClientFactory
      * @param \Magento\Framework\UrlInterface $urlBuilder
      * @param \Magento\Framework\App\RequestInterface $request
      * @param \Magento\Tax\Helper\Data $taxHelper
-     * @param \Magento\Framework\Model\ResourceModel\AbstractResource $resource
-     * @param \Magento\Framework\Data\Collection\AbstractDb $resourceCollection
+     * @param \Solteq\Enterpay\Model\EnterpayCurlPutFactory $enterpayCurlPutFactory
+     * @param \Magento\Framework\Model\ResourceModel\AbstractResource|null $resource
+     * @param \Magento\Framework\Data\Collection\AbstractDb|null $resourceCollection
      * @param array $data
-     * @SuppressWarnings(PHPMD.ExcessiveParameterList)
      */
     public function __construct(
         \Magento\Framework\Model\Context $context,
@@ -119,6 +129,7 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
         \Magento\Framework\UrlInterface $urlBuilder,
         \Magento\Framework\App\RequestInterface $request,
         \Magento\Tax\Helper\Data $taxHelper,
+        \Solteq\Enterpay\Model\EnterpayCurlPutFactory $enterpayCurlPutFactory,
         \Magento\Framework\Model\ResourceModel\AbstractResource $resource = null,
         \Magento\Framework\Data\Collection\AbstractDb $resourceCollection = null,
         array $data = []
@@ -135,13 +146,13 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
           $resourceCollection,
           $data
       );
-
       $this->_orderStatusCollectionFactory = $orderStatusCollectionFactory;
       $this->_session = $session;
       $this->_httpClientFactory = $httpClientFactory;
       $this->_urlBuilder = $urlBuilder;
       $this->_request = $request;
       $this->_taxHelper = $taxHelper;
+      $this->_enterpayCurlPutFactory = $enterpayCurlPutFactory;
     }
 
     public function initialize($paymentAction, $stateObject)
@@ -193,12 +204,57 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
         throw new LocalizedException(__('Invalid transaction ID.'));
       }
 
+      $this->_fullRefund = $this->getIsFullRefund($payment, $amount);
+
       $body = $this->_buildRefundRequest($payment, $amount);
       if ($this->_postRefundRequest($body)) {
         return $this;
       }
 
       throw new LocalizedException(__('Error refunding invoice. Please try again or refund offline.'));
+    }
+
+    /**
+     * Get is full refund. Returns true if the total amount after refunds and cancellations is 0
+     *
+     * @param \Magento\Payment\Model\InfoInterface $payment
+     * @param $amount
+     * @return bool
+     */
+    protected function getIsFullRefund(\Magento\Payment\Model\InfoInterface $payment, $amount)
+    {
+      $fullRefund = false;
+
+      $amountRefunded = $payment->getAmountRefunded();
+      $amountCanceled = $payment->getAmountCanceled();
+      $amountToRefund = $amount;
+
+      $totalRefundAmount = round($amountRefunded + $amountCanceled + $amountToRefund, 2);
+      $amountOrdered = round($payment->getAmountOrdered(), 2);
+
+      if ($amountOrdered - $totalRefundAmount <= 0) {
+        $fullRefund = true;
+      }
+
+      return $fullRefund;
+    }
+
+    /**
+     * Activate invoice
+     *
+     * @param $invoice
+     * @return $this
+     * @throws LocalizedException
+     * @throws \Zend_Http_Client_Exception
+     */
+    public function activate($invoice)
+    {
+      $body = $this->_buildInvoiceActivateRequest($invoice);
+      if ($this->_invoiceActivateRequest($body)) {
+        return $this;
+      }
+
+      throw new LocalizedException(__('Error activating the invoice'));
     }
 
     /**
@@ -229,6 +285,24 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
         $data['refund']['vat_bases_to_refund'] = $this->getAdjustmentRefundData($payment);
       }
 
+      $data['hmac'] = $this->_calcInvoiceApiHmac($data);
+
+      return $data;
+    }
+
+    /**
+     * Build invoice activate request
+     *
+     * @param $invoice
+     * @return array
+     */
+    protected function _buildInvoiceActivateRequest($invoice)
+    {
+      $data = [
+        'merchant' => $this->_getMerchantId(),
+        'merchant_key_version' => intval($this->_getMerchantSecretVersion()),
+        'identifier_merchant' => $invoice->getOrder()->getIncrementId(),
+      ];
       $data['hmac'] = $this->_calcInvoiceApiHmac($data);
 
       return $data;
@@ -483,6 +557,47 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
     }
 
     /**
+     * Invoice activate request
+     *
+     * @param $data
+     * @return bool
+     * @throws LocalizedException
+     * @throws \Zend_Http_Client_Exception
+     */
+    protected function _invoiceActivateRequest($data)
+    {
+      /* @var \Solteq\Enterpay\Model\EnterpayCurlPut */
+      $client = $this->_enterpayCurlPutFactory->create();
+
+      try {
+        $response = $client->request($this->_apiActivateInvoiceUrl(), $data);
+      } catch (\Exception $e) {
+        throw new LocalizedException(__('Invoice API connection error. Error: %1', [$e->getMessage()]));
+      }
+
+      $body = json_decode($response);
+
+      if (!isset($body->error) && !isset($body->errors)) {
+        return TRUE;
+      } else {
+        // Single error as a string
+        if (isset($body->error)) {
+          throw new LocalizedException(__('Invoice API activate error. Error: %1', [$body->error]));
+        }
+        // Multiple errors in an array
+        else if (isset($body->errors)) {
+          throw new LocalizedException(__('Invoice API activate error. Errors: %1', [implode(', ', $body->errors)]));
+        }
+        // Error not available
+        else {
+          throw new LocalizedException(__('Invoice API activate error. Errors: Unknown error'));
+        }
+      }
+
+      return FALSE;
+    }
+
+    /**
      * Return true if order has bundle products.
      *
      * @param \Magento\Sales\Model\Order
@@ -526,6 +641,20 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
       }
 
       return 'https://test.laskuyritykselle.fi/api/merchant/invoices/refund';
+    }
+
+    /**
+     * Get API URL for activating the invoice
+     *
+     * @return string
+     */
+    protected function _apiActivateInvoiceUrl()
+    {
+      if ( ! $this->_getTestMode() ) {
+        return 'https://laskuyritykselle.fi/api/merchant/invoices/activate';
+      }
+
+      return 'https://test.laskuyritykselle.fi/api/merchant/invoices/activate';
     }
 
     /**
