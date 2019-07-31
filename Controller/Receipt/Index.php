@@ -33,7 +33,15 @@ class Index extends \Magento\Framework\App\Action\Action
      */
     protected $scopeConfig;
 
+    /**
+     * @var Enterpay
+     */
     protected $enterpay;
+
+    /**
+     * @var \Solteq\Enterpay\Helper\FeeHelper
+     */
+    protected $feeHelper;
 
     /**
      * Constructor
@@ -49,7 +57,8 @@ class Index extends \Magento\Framework\App\Action\Action
         \Magento\Sales\Api\TransactionRepositoryInterface $transactionRepository,
         \Magento\Sales\Model\Order\Email\Sender\OrderSender $orderSender,
         ScopeConfigInterface $scopeConfig,
-        Enterpay $enterpay
+        Enterpay $enterpay,
+        \Solteq\Enterpay\Helper\FeeHelper $feeHelper
     )
     {
         parent::__construct($context);
@@ -60,6 +69,7 @@ class Index extends \Magento\Framework\App\Action\Action
         $this->orderSender = $orderSender;
         $this->scopeConfig = $scopeConfig;
         $this->enterpay = $enterpay;
+        $this->feeHelper = $feeHelper;
     }
 
     /**
@@ -164,6 +174,12 @@ class Index extends \Magento\Framework\App\Action\Action
 
       // Set last transaction ID
       $order->getPayment()->setLastTransId($transactionId)->save();
+
+      // Set fee_amount_authorized
+      if ($fee = $this->feeHelper->getPaymentFee($order->getPayment())) {
+        $fee->setData('base_amount_authorized', $fee->getData('base_amount'));
+        $fee->save();
+      }
 
       // Create invoice
       $generateInvoice = $this->getGenerateInvoice($order);

@@ -4,6 +4,7 @@ namespace Solteq\Enterpay\Model;
 
 use Magento\Bundle\Model\Product\Type as BundleType;
 use Magento\Framework\Exception\LocalizedException;
+use Solteq\Enterpay\Helper\FeeHelper;
 
 /**
  * Payment method model
@@ -12,6 +13,7 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
 {
     const PAYMENT_METHOD_CODE = 'enterpay';
     const SHIPPING_IDENTIFIER = 'SHIP';
+    const DISCOUNT_IDENTIFIER = 'DIS';
 
     /**
      * Payment method code
@@ -90,10 +92,15 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
      */
     protected $_fullRefund;
 
-  /**
-   * @var \Solteq\Enterpay\Model\EnterpayCurlPutFactory
-   */
+    /**
+     * @var \Solteq\Enterpay\Model\EnterpayCurlPutFactory
+     */
     protected $_enterpayCurlPutFactory;
+
+    /**
+     * @var FeeHelper
+     */
+    protected $_feeHelper;
 
     /**
      * Enterpay constructor.
@@ -111,6 +118,7 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
      * @param \Magento\Framework\App\RequestInterface $request
      * @param \Magento\Tax\Helper\Data $taxHelper
      * @param \Solteq\Enterpay\Model\EnterpayCurlPutFactory $enterpayCurlPutFactory
+     * @param \Solteq\Enterpay\Helper\FeeHelper $feeHelper
      * @param \Magento\Framework\Model\ResourceModel\AbstractResource|null $resource
      * @param \Magento\Framework\Data\Collection\AbstractDb|null $resourceCollection
      * @param array $data
@@ -130,6 +138,7 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
         \Magento\Framework\App\RequestInterface $request,
         \Magento\Tax\Helper\Data $taxHelper,
         \Solteq\Enterpay\Model\EnterpayCurlPutFactory $enterpayCurlPutFactory,
+        \Solteq\Enterpay\Helper\FeeHelper $feeHelper,
         \Magento\Framework\Model\ResourceModel\AbstractResource $resource = null,
         \Magento\Framework\Data\Collection\AbstractDb $resourceCollection = null,
         array $data = []
@@ -153,6 +162,7 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
       $this->_request = $request;
       $this->_taxHelper = $taxHelper;
       $this->_enterpayCurlPutFactory = $enterpayCurlPutFactory;
+      $this->_feeHelper = $feeHelper;
     }
 
     public function initialize($paymentAction, $stateObject)
@@ -204,7 +214,8 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
         throw new LocalizedException(__('Invalid transaction ID.'));
       }
 
-      $this->_fullRefund = $this->getIsFullRefund($payment, $amount);
+      // Set isFullRefund. We only refund invoice fee if the whole order is refunded
+      $this->setIsFullRefund($payment, $amount);
 
       $body = $this->_buildRefundRequest($payment, $amount);
       if ($this->_postRefundRequest($body)) {
@@ -221,7 +232,7 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
      * @param $amount
      * @return bool
      */
-    protected function getIsFullRefund(\Magento\Payment\Model\InfoInterface $payment, $amount)
+    protected function setIsFullRefund(\Magento\Payment\Model\InfoInterface $payment, $amount)
     {
       $fullRefund = false;
 
@@ -236,7 +247,7 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
         $fullRefund = true;
       }
 
-      return $fullRefund;
+      $this->_fullRefund = $fullRefund;
     }
 
     /**
@@ -276,7 +287,7 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
         ]
       ];
 
-      // Items Refund (+ shipping)
+      // Items Refund (including shipping and invoice fee)
       $data['refund']['items_to_refund'] = $this->getItemsToRefund($payment);
 
       // Adjustment Refund
@@ -318,32 +329,55 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
     {
       $order = $payment->getOrder();
       $creditMemo = $payment->getCreditMemo();
-
       $items = [];
-      $num = 0;
 
       // Refund Items
       foreach ($creditMemo->getItems() as $index => $item) {
         if ($item->getOrderItem()->getParentItem()) {
           continue;
         }
-        $items[] = [
-          "num" => $num,
-          "refunding_type" => "quantity",
-          'refunded_quantity' => $item->getQty()
-        ];
-        $num++;
+        // num is the index of the original item to be refunded
+        $num = array_search($item->getSku(), array_column($this->_itemArgs($order), 'identifier'));
+        if ($num !== false) {
+          $items[] = [
+            "num" => $num,
+            "refunding_type" => "quantity",
+            'refunded_quantity' => $item->getQty()
+          ];
+        }
       }
 
       // Refund Shipping
       if (!$order->getIsVirtual()) {
         $shipping = $creditMemo->getData('shipping_incl_tax');
-        $items[] = [
-          "num" => $num,
-          "refunding_type" => "amount",
-          'currency' => $payment->getOrder()->getOrderCurrencyCode(),
-          'refunded_amount' => intval(floatval($shipping) * 100)
-        ];
+        $num = $num = array_search(self::SHIPPING_IDENTIFIER, array_column($this->_itemArgs($order), 'identifier'));
+        if ($num !== false) {
+          $items[] = [
+            "num" => $num,
+            "refunding_type" => "amount",
+            'currency' => $payment->getOrder()->getOrderCurrencyCode(),
+            'refunded_amount' => intval(floatval($shipping) * 100)
+          ];
+        }
+      }
+
+      // Refund invoice fee
+      if($this->getIsFullRefund() && $fee = $this->_feeHelper->getPaymentFee($payment)){
+        $amountToRefund = $fee->getBaseAmountCaptured() - $fee->getBaseAmountRefunded();
+        if($amountToRefund >= ConfigProvider::PRICE_TOLERANCE_LEVEL){
+          $num = $num = array_search($fee->getData('product_id'), array_column($this->_itemArgs($order), 'identifier'));
+          if ($num !== false) {
+
+            $fee->setBaseAmountRefunded(round($fee->getBaseAmountRefunded() + $amountToRefund, 2));
+            $fee->save();
+
+            $items[] = [
+              "num" => $num,
+              "refunding_type" => "quantity",
+              'refunded_quantity' => 1
+            ];
+          }
+        }
       }
       return $items;
     }
@@ -436,7 +470,7 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
     protected function getOrderVatBaseAmounts($order)
     {
       $orderVatBaseAmounts = [];
-      $orderItems = $this->_itemArgs($order);
+      $orderItems = $this->_itemArgs($order, false);
       foreach ($orderItems as $index => $item) {
         $intTaxRate = intval(floatval($item['tax_rate']) * 100);
         if (!isset($orderVatBaseAmounts[$intTaxRate])) {
@@ -657,6 +691,11 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
       return 'https://test.laskuyritykselle.fi/api/merchant/invoices/activate';
     }
 
+    protected function getIsFullRefund()
+    {
+      return $this->_fullRefund;
+    }
+
     /**
      * Calculate invoice API HMAC
      *
@@ -772,6 +811,12 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
           $dataKey = "cart_items[{$index}][{$key}]";
           $data[$dataKey] = $value;
         }
+      }
+
+      // Add payment fee to total amount
+      if ($fee = $this->_feeHelper->getPaymentFee($order->getPayment())) {
+        $feeAmount = intval(floatval($fee->getData('base_amount') * 100));
+        $data['total_price_including_tax'] = $data['total_price_including_tax'] + $feeAmount;
       }
 
       // Calculate hmac
@@ -925,6 +970,46 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
     }
 
     /**
+     * Get fee enabled
+     *
+     * @return string
+     */
+    public function getFeeEnabled()
+    {
+      return trim($this->getConfigData('fee_enabled'));
+    }
+
+    /**
+     * Get fee value
+     *
+     * @return string
+     */
+    public function getFeeValue()
+    {
+      return trim($this->getConfigData('fee_value'));
+    }
+
+    /**
+     * Get fee tax class
+     *
+     * @return string
+     */
+    public function getFeeTaxClass()
+    {
+      return trim($this->getConfigData('fee_tax_class'));
+    }
+
+    /**
+     * Get get fee description
+     *
+     * @return string
+     */
+    public function getFeeDescription()
+    {
+      return trim($this->getConfigData('fee_description'));
+    }
+
+    /**
      * Get payment page redirect URL
      */
     public function getPaymentRedirectUrl()
@@ -936,10 +1021,12 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
      * Create an array of order items (products, shipping, discounts) to be sent
      * to Enterpay when paying
      *
-     * @param Order $order
+     * @param $order
+     * @param bool $includeInvoiceFee
      * @return array
+     * @throws LocalizedException
      */
-    private function _itemArgs($order)
+    private function _itemArgs($order, $includeInvoiceFee = true)
     {
       $items = array();
 
@@ -983,12 +1070,17 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
         }
 
         $items[] = array(
-          'identifier' => 'DIS',
+          'identifier' => self::DISCOUNT_IDENTIFIER,
           'name' => $order->getDiscountDescription(),
           'quantity' => 1,
           'unit_price_including_tax' => intval(floatval($discountData->getDiscountInclTax()) * -100),
           'tax_rate' => round($discountTaxPct, 2),
         );
+      }
+
+      # Add payment fee
+      if ($includeInvoiceFee && $fee = $this->_feeHelper->getPaymentFee($order->getPayment(), true)) {
+        $items = $this->_feeHelper->appendPaymentFee($items, $fee, $fee->getData('base_amount'));
       }
 
       return $items;
