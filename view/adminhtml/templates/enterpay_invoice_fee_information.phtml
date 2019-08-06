@@ -1,0 +1,6 @@
+<?php /** @var $block Solteq\Enterpay\Block\Adminhtml\Sales\Order\PaymentInformation */ ?>
+<?php if ($block->isInvoiceFeeOrder()): ?>
+<div class="solteq-enterpay-invoice-fee-information">
+  <?= /* @escapeNotVerified */ $block->getFeeInformation(); ?>
+</div>
+<?php endif ?>

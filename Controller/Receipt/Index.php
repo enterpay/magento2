@@ -2,6 +2,9 @@
 namespace Solteq\Enterpay\Controller\Receipt;
 
 use Magento\Sales\Model\Order\Payment\Transaction;
+use Magento\Framework\App\Config\ScopeConfigInterface;
+use Magento\Store\Model\ScopeInterface;
+use \Solteq\Enterpay\Model\Enterpay;
 
 class Index extends \Magento\Framework\App\Action\Action
 {
@@ -26,6 +29,21 @@ class Index extends \Magento\Framework\App\Action\Action
     protected $orderSender;
 
     /**
+     * @var ScopeConfigInterface
+     */
+    protected $scopeConfig;
+
+    /**
+     * @var Enterpay
+     */
+    protected $enterpay;
+
+    /**
+     * @var \Solteq\Enterpay\Helper\FeeHelper
+     */
+    protected $feeHelper;
+
+    /**
      * Constructor
      *
      * @param \Magento\Framework\App\Action\Context $context
@@ -37,7 +55,10 @@ class Index extends \Magento\Framework\App\Action\Action
         \Magento\Framework\App\Action\Context $context,
         \Magento\Checkout\Model\Session $session,
         \Magento\Sales\Api\TransactionRepositoryInterface $transactionRepository,
-        \Magento\Sales\Model\Order\Email\Sender\OrderSender $orderSender
+        \Magento\Sales\Model\Order\Email\Sender\OrderSender $orderSender,
+        ScopeConfigInterface $scopeConfig,
+        Enterpay $enterpay,
+        \Solteq\Enterpay\Helper\FeeHelper $feeHelper
     )
     {
         parent::__construct($context);
@@ -46,6 +67,9 @@ class Index extends \Magento\Framework\App\Action\Action
         $this->session = $session;
         $this->transactionRepository = $transactionRepository;
         $this->orderSender = $orderSender;
+        $this->scopeConfig = $scopeConfig;
+        $this->enterpay = $enterpay;
+        $this->feeHelper = $feeHelper;
     }
 
     /**
@@ -151,8 +175,15 @@ class Index extends \Magento\Framework\App\Action\Action
       // Set last transaction ID
       $order->getPayment()->setLastTransId($transactionId)->save();
 
+      // Set fee_amount_authorized
+      if ($fee = $this->feeHelper->getPaymentFee($order->getPayment())) {
+        $fee->setData('base_amount_authorized', $fee->getData('base_amount'));
+        $fee->save();
+      }
+
       // Create invoice
-      if ($order->canInvoice()) {
+      $generateInvoice = $this->getGenerateInvoice($order);
+      if ($order->canInvoice() && $generateInvoice) {
         $method->getInfoInstance()->capture();
 
         // Add transaction ID for invoice so we can make online refunds
@@ -188,5 +219,17 @@ class Index extends \Magento\Framework\App\Action\Action
       // Redirect to success page
       $this->session->getQuote()->setIsActive(false)->save();
       $this->_redirect('checkout/onepage/success');
+    }
+
+    protected function getGenerateInvoice($order)
+    {
+      $storeId = $order->getStore()->getStoreId();
+      $generateInvoice = $this->scopeConfig->getValue(
+        'payment/enterpay/generate_invoice',
+        ScopeInterface::SCOPE_STORE,
+        $storeId
+      );
+
+      return $generateInvoice;
     }
 }

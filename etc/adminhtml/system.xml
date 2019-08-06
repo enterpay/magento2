@@ -50,8 +50,9 @@
                     <source_model>Magento\Directory\Model\Config\Source\Country</source_model>
                     <can_be_empty>1</can_be_empty>
                 </field>
-                <field id="instructions" translate="label" type="textarea" sortOrder="75" showInDefault="1" showInWebsite="1" showInStore="1">
+                <field id="instructions" translate="label comment" type="textarea" sortOrder="75" showInDefault="1" showInWebsite="1" showInStore="1">
                     <label>Instructions</label>
+                    <comment>E.g 'Handling fee of %.2f€ will be added to your order'. The '%.2f' will be automatically replaced by Invoice fee value. The number in '%.2f' is the amount of decimals to display</comment>
                 </field>
                 <field id="min_order_total" translate="label" type="text" sortOrder="98" showInDefault="1" showInWebsite="1" showInStore="0">
                     <label>Minimum Order Total</label>
@@ -61,6 +62,50 @@
                 </field>
                 <field id="sort_order" translate="label" type="text" sortOrder="100" showInDefault="1" showInWebsite="1" showInStore="0">
                     <label>Sort Order</label>
+                </field>
+                <field id="fee_enabled" translate="label" type="select" sortOrder="140" showInDefault="1" showInWebsite="1" showInStore="1">
+                    <label>Include Invoice fee</label>
+                    <source_model>Magento\Config\Model\Config\Source\Yesno</source_model>
+                </field>
+                <field id="fee_value" translate="label comment" type="text" sortOrder="150" showInDefault="1" showInWebsite="1" showInStore="1">
+                    <label>Invoice fee value</label>
+                    <comment>Invoice fee in base currency</comment>
+                    <depends>
+                        <field id="fee_enabled">1</field>
+                    </depends>
+                    <validate>validate-number</validate>
+                </field>
+                <field id="fee_tax_class" translate="label comment" type="select" sortOrder="160" showInDefault="1" showInWebsite="1" showInStore="1">
+                    <label>Tax class for invoice fee</label>
+                    <source_model>Magento\Tax\Model\TaxClass\Source\Product</source_model>
+                    <depends>
+                        <field id="fee_enabled">1</field>
+                    </depends>
+                </field>
+                <field id="fee_description" translate="label comment" type="text" sortOrder="170" showInDefault="1" showInWebsite="1" showInStore="1">
+                    <label>Invoice fee description</label>
+                    <comment>This text will be used as item name for invoicing fee in Enterpay invoices</comment>
+                    <depends>
+                        <field id="fee_enabled">1</field>
+                    </depends>
+                </field>
+                <field id="show_fee_in_emails" translate="label comment" type="select" sortOrder="180" showInDefault="1" showInWebsite="1" showInStore="1">
+                    <label>Show invoice fee in emails</label>
+                    <source_model>Magento\Config\Model\Config\Source\Yesno</source_model>
+                    <comment>Show Invoice fee in order, invoice and credit memo emails</comment>
+                    <depends>
+                        <field id="fee_enabled">1</field>
+                    </depends>
+                </field>
+                <field id="generate_invoice" translate="label comment" type="select" sortOrder="190" showInDefault="1" showInWebsite="1" showInStore="1">
+                    <label>Generate invoice automatically</label>
+                    <source_model>Magento\Config\Model\Config\Source\Yesno</source_model>
+                    <comment>Generate invoice automatically when the customer has made the payment</comment>
+                </field>
+                <field id="activate_invoice" translate="label comment" type="select" sortOrder="200" showInDefault="1" showInWebsite="1" showInStore="1">
+                    <label>Activate invoice automatically</label>
+                    <source_model>Magento\Config\Model\Config\Source\Yesno</source_model>
+                    <comment>Activate invoice automatically when invoice is generated</comment>
                 </field>
             </group>
         </section>

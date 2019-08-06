@@ -7,10 +7,14 @@ use Magento\Payment\Helper\Data as PaymentHelper;
 
 class ConfigProvider implements ConfigProviderInterface
 {
+    const PAYMENT_FEE_KEY = 'enterpay_invoice_fee';
+    const SKU_PAYMENT_FEE = 'INVOICE_FEE';
+    const PRICE_TOLERANCE_LEVEL = 0.01;
+
     /**
      * @var string[]
      */
-    protected $methodCodes = [
+    const PAYMENT_METHODS = [
         Enterpay::PAYMENT_METHOD_CODE,
     ];
 
@@ -33,7 +37,7 @@ class ConfigProvider implements ConfigProviderInterface
         Escaper $escaper
     ) {
       $this->escaper = $escaper;
-      foreach ($this->methodCodes as $code) {
+      foreach (self::PAYMENT_METHODS as $code) {
         $this->methods[$code] = $paymentHelper->getMethodInstance($code);
       }
     }
@@ -44,7 +48,7 @@ class ConfigProvider implements ConfigProviderInterface
     public function getConfig()
     {
       $config = [];
-      foreach ($this->methodCodes as $code) {
+      foreach (self::PAYMENT_METHODS as $code) {
         $config['payment']['instructions'][$code] = $this->getInstructions($code);
         $config['payment']['payment_redirect_url'][$code] = $this->getPaymentRedirectUrl($code);
       }
@@ -63,13 +67,16 @@ class ConfigProvider implements ConfigProviderInterface
     }
 
     /**
-     * Get instructions text from config
+     * Get instructions text with fee value from config
      *
      * @param string $code
      * @return string
      */
     protected function getInstructions($code)
     {
-      return nl2br($this->escaper->escapeHtml($this->methods[$code]->getInstructions()));
+      $instructionsString = $this->escaper->escapeHtml($this->methods[$code]->getInstructions());
+      $feeValue = (float) $this->escaper->escapeHtml($this->methods[$code]->getFeeValue());
+      $instructionsString = sprintf($instructionsString, $feeValue);
+      return nl2br($instructionsString);
     }
 }
