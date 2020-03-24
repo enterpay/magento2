@@ -98,7 +98,7 @@ class FeeHelper
           'identifier' => $fee->getData('product_id'),
           'name' => $fee->getData('description'),
           'quantity' => 1,
-          'unit_price_including_tax' => intval(floatval($amount) * 100),
+          'unit_price_including_tax' => intval(round($amount * 100)),
           'tax_rate' => round(floatval($fee->getData('tax_percent') / 100), 2),
         ];
         $result[] = $itemData;
