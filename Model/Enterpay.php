@@ -356,7 +356,7 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
             "num" => $num,
             "refunding_type" => "amount",
             'currency' => $payment->getOrder()->getOrderCurrencyCode(),
-            'refunded_amount' => intval(floatval($shipping) * 100)
+            'refunded_amount' => intval(round($shipping * 100))
           ];
         }
       }
@@ -391,7 +391,7 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
     protected function getAdjustmentRefundData($payment)
     {
       $adjustment = $payment->getCreditMemo()->getAdjustment();
-      $adjustment = intval(floatval($adjustment) * 100);
+      $adjustment = intval(round($adjustment * 100));
       $allowedVatBaseRefundAmounts = $this->getAllowedVatBaseRefundAmounts($payment);
       $totalAllowedRefunds = array_sum(array_column($allowedVatBaseRefundAmounts, 'amount'));
       $roundingDelta = 0.0000001;
@@ -472,7 +472,7 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
       $orderVatBaseAmounts = [];
       $orderItems = $this->_itemArgs($order, false);
       foreach ($orderItems as $index => $item) {
-        $intTaxRate = intval(floatval($item['tax_rate']) * 100);
+        $intTaxRate = intval(round($item['tax_rate'] * 100));
         if (!isset($orderVatBaseAmounts[$intTaxRate])) {
           $orderVatBaseAmounts[$intTaxRate] = [
             'tax_rate' => $item['tax_rate'],
@@ -518,8 +518,8 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
         $orderItem = $item->getOrderItem();
 
         $taxRate = round(floatval($orderItem->getTaxPercent() / 100), 2);
-        $intTaxRate = intval(floatval($taxRate) * 100);
-        $rowTotal = intval(floatval($item->getData('row_total_incl_tax')) * 100);
+        $intTaxRate = intval(round($taxRate * 100));
+        $rowTotal = intval(round($item->getData('row_total_incl_tax') * 100));
         if (!isset($vatBaseRefunds[$intTaxRate])) {
           $vatBaseRefunds[$intTaxRate] = ['tax_rate' => $taxRate, 'amount' => $rowTotal];
         } else {
@@ -535,9 +535,9 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
         if ($shippingExclTax > 0) {
           $shippingTaxRate = round(($shippingInclTax - $shippingExclTax) / $shippingExclTax, 2);
         }
-        $intTaxRate = intval(floatval($shippingTaxRate) * 100);
+        $intTaxRate = intval(round($shippingTaxRate * 100));
         $shippingAmount = $creditMemo->getData('shipping_incl_tax');
-        $shippingAmount = intval(floatval($shippingAmount) * 100);
+        $shippingAmount = intval(round($shippingAmount * 100));
         if (!isset($vatBaseRefunds[$intTaxRate])) {
           $vatBaseRefunds[$intTaxRate] = ['tax_rate' => $shippingTaxRate, 'amount' => $shippingAmount];
         } else {
@@ -781,7 +781,7 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
         'reference' => $this->_calculateInvoiceRef($order->getIncrementId()),
         'locale' => $this->_getLocale(),
         'currency' => $order->getOrderCurrencyCode(),
-        'total_price_including_tax' => intval(floatval($order->getGrandTotal()) * 100),
+        'total_price_including_tax' => intval(round($order->getGrandTotal() * 100)),
         'url_return' => $receiptUrl,
         'billing_address[street]' => $billingAddress->getStreetLine(1),
         'billing_address[streetSecondRow]' => $billingAddress->getStreetLine(2),
@@ -815,7 +815,7 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
 
       // Add payment fee to total amount
       if ($fee = $this->_feeHelper->getPaymentFee($order->getPayment())) {
-        $feeAmount = intval(floatval($fee->getData('base_amount') * 100));
+        $feeAmount = intval(round($fee->getData('base_amount') * 100));
         $data['total_price_including_tax'] = $data['total_price_including_tax'] + $feeAmount;
       }
 
