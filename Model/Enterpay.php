@@ -1036,7 +1036,7 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
           'identifier' => $item->getSku(),
           'name' => $item->getName(),
           'quantity' => floatval($item->getQtyOrdered()),
-          'unit_price_including_tax' => intval(floatval($item->getPriceInclTax()) * 100),
+          'unit_price_including_tax' => intval(round($item->getPriceInclTax() * 100)),
           'tax_rate' => round(floatval($item->getTaxPercent() / 100), 2),
         );
       }
@@ -1054,7 +1054,7 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
           'identifier' => self::SHIPPING_IDENTIFIER,
           'name' => $order->getShippingDescription(),
           'quantity' => 1,
-          'unit_price_including_tax' => intval(floatval($order->getShippingInclTax()) * 100),
+          'unit_price_including_tax' => intval(round($order->getShippingInclTax() * 100)),
           'tax_rate' => round($shippingTaxPct, 2),
         );
       }
@@ -1073,7 +1073,7 @@ class Enterpay extends \Magento\Payment\Model\Method\AbstractMethod
           'identifier' => self::DISCOUNT_IDENTIFIER,
           'name' => $order->getDiscountDescription(),
           'quantity' => 1,
-          'unit_price_including_tax' => intval(floatval($discountData->getDiscountInclTax()) * -100),
+          'unit_price_including_tax' => intval(round($discountData->getDiscountInclTax() * -100)),
           'tax_rate' => round($discountTaxPct, 2),
         );
       }
